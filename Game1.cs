@@ -19,6 +19,7 @@ public class Game1 : Game
     private const int MinTile = 12;
     private const int MaxTile = 58;
     private const float PhaseSeconds = 1.7f;
+    private const int OnboardingStepCount = 3;
 
     // Base font sizes, defined in the same 720-tall virtual canvas space as
     // everything else. The actual rasterization size is these values * the
@@ -28,6 +29,8 @@ public class Game1 : Game
     private const int BodyFontSize = 18;
     private const int StrongFontSize = 18;
     private const int TitleFontSize = 26;
+    private const int HeroFontSize = 64;
+    private const int SubHeroFontSize = 22;
 
     private static readonly Color BgTop = new(34, 41, 60);
     private static readonly Color BgBottom = new(17, 21, 33);
@@ -38,8 +41,12 @@ public class Game1 : Game
     private static readonly Color Accent = new(150, 230, 170);
     private static readonly Color Warm = new(255, 214, 92);
     private static readonly Color Dim = new(100, 100, 106);
+    private static readonly Color PanelBg = new(38, 45, 64);
+    private static readonly Color CloudTint = new(225, 230, 240, 220);
 
-    private enum FontKind { Small, Body, Strong, Title }
+    private enum FontKind { Small, Body, Strong, Title, Hero, SubHero }
+
+    private enum AppState { Menu, Onboarding, Playing }
 
     // ============================================================= fields
 
@@ -77,6 +84,24 @@ public class Game1 : Game
     private int _poweredNow;
     private int _totalHouses;
 
+    // Menu / onboarding flow.
+    private AppState _appState = AppState.Menu;
+    private int _onboardingStep;
+
+    private static readonly string[] OnboardingLine1 =
+    {
+        "Leg verbindingen en plaats slimme IT",
+        "Elk level heeft een klein probleem:",
+        "Los het op met het juiste gereedschap",
+    };
+
+    private static readonly string[] OnboardingLine2 =
+    {
+        "zodat alle huizen hun stroom houden.",
+        "Een wolk voor de zon, een vraagpiek of wegvallende wind.",
+        "en ontdek hoe een echte smart grid werkt!",
+    };
+
     // ============================================================= construction
 
     public Game1(int startLevel = 0)
@@ -96,7 +121,7 @@ public class Game1 : Game
 
         Window.AllowUserResizing = true;
         Window.ClientSizeChanged += OnWindowResized;
-        Window.Title = "WAT NOU? - hou het stroomnet draaiende";
+        Window.Title = "WATT NU? - hou het slimme stroomnet draaiend";
 
         base.Initialize();
     }
@@ -118,8 +143,9 @@ public class Game1 : Game
         _fontSystemBold = new FontSystem();
         _fontSystemBold.AddFont(File.ReadAllBytes(Path.Combine(contentDir, "Fonts", "DejaVuSans-Bold.ttf")));
 
-        _state = new GameState(LevelData.LoadAll());
-        _state.BeginAt(_startLevel > 0 ? _startLevel - 1 : 0);
+        // GameState is created once the player actually starts the game (see
+        // StartGame), so the menu/onboarding flow can render before any level
+        // is loaded.
     }
 
     // ============================================================= update
@@ -133,6 +159,52 @@ public class Game1 : Game
         if (_keys.IsKeyDown(Keys.Escape))
             Exit();
 
+        switch (_appState)
+        {
+            case AppState.Menu:
+                UpdateMenu();
+                break;
+            case AppState.Onboarding:
+                UpdateOnboarding();
+                break;
+            case AppState.Playing:
+                UpdatePlaying(dt);
+                break;
+        }
+
+        _prevMouse = _mouse;
+        _prevKeys = _keys;
+        base.Update(gameTime);
+    }
+
+    private void UpdateMenu()
+    {
+        (_, Rectangle button) = ComputeMenuLayout();
+        if (Confirmed(button))
+            _appState = AppState.Onboarding;
+    }
+
+    private void UpdateOnboarding()
+    {
+        (_, Rectangle button) = ComputeOnboardingLayout();
+        if (!Confirmed(button))
+            return;
+
+        if (_onboardingStep < OnboardingStepCount - 1)
+            _onboardingStep++;
+        else
+            StartGame();
+    }
+
+    private void StartGame()
+    {
+        _state = new GameState(LevelData.LoadAll());
+        _state.BeginAt(_startLevel > 0 ? _startLevel - 1 : 0);
+        _appState = AppState.Playing;
+    }
+
+    private void UpdatePlaying(float dt)
+    {
         Level level = _state.CurrentLevel;
         Grid grid = _state.Grid;
 
@@ -145,10 +217,6 @@ public class Game1 : Game
         _solved = grid.IsSolved(level);
         _totalHouses = grid.TotalHouses;
         _poweredNow = grid.Simulate(level, _state.DisplayPhase);
-
-        _prevMouse = _mouse;
-        _prevKeys = _keys;
-        base.Update(gameTime);
     }
 
     private void HandleLevelHotkeys(Level level)
@@ -196,6 +264,24 @@ public class Game1 : Game
 
     protected override void Draw(GameTime gameTime)
     {
+        switch (_appState)
+        {
+            case AppState.Menu:
+                DrawMenuScreen();
+                break;
+            case AppState.Onboarding:
+                DrawOnboardingScreen();
+                break;
+            case AppState.Playing:
+                DrawPlayingScreen();
+                break;
+        }
+
+        base.Draw(gameTime);
+    }
+
+    private void DrawPlayingScreen()
+    {
         Level level = _state.CurrentLevel;
         Grid grid = _state.Grid;
         Phase phase = level.Phases[_state.DisplayPhase];
@@ -229,13 +315,11 @@ public class Game1 : Game
         DrawInfoBarText(level, phase);
         DrawFooterText();
         _spriteBatch.End();
-
-        base.Draw(gameTime);
     }
 
     private void DrawInfoBarBackground()
     {
-        Fill(new Rectangle(0, 0, _virtualWidth, InfoH), new Color(38, 45, 64));
+        Fill(new Rectangle(0, 0, _virtualWidth, InfoH), PanelBg);
     }
 
     private void DrawInfoBarText(Level level, Phase phase)
@@ -303,6 +387,150 @@ public class Game1 : Game
             "Linkermuisknop: plaatsen  \u00b7  rechtermuisknop: weghalen  \u00b7  cijfertoetsen: kies gereedschap  " +
             "\u00b7  R: level opnieuw  \u00b7  \u2190/\u2192: level wisselen",
             24, H - 30, TextDim);
+    }
+
+    // ============================================================= menu screen
+
+    private (Rectangle Box, Rectangle Button) ComputeMenuLayout()
+    {
+        int boxW = Math.Clamp(_virtualWidth - 320, 320, 520);
+        const int boxH = 220;
+        var box = new Rectangle((_virtualWidth - boxW) / 2, 300, boxW, boxH);
+        var button = new Rectangle(_virtualWidth / 2 - 130, box.Bottom + 40, 260, 64);
+        return (box, button);
+    }
+
+    private void DrawMenuScreen()
+    {
+        (Rectangle box, Rectangle button) = ComputeMenuLayout();
+
+        GraphicsDevice.SetRenderTarget(_renderTarget);
+        GraphicsDevice.Clear(BgBottom);
+
+        _spriteBatch.Begin(samplerState: SamplerState.PointClamp);
+        Gradient(new Rectangle(0, 0, _virtualWidth, H), BgTop, BgBottom);
+        DrawDiagramBox(box, showCloud: false, showBattery: false, housesPowered: true);
+        DrawButtonChrome(button);
+        _spriteBatch.End();
+
+        GraphicsDevice.SetRenderTarget(null);
+        GraphicsDevice.Clear(Color.Black);
+        _spriteBatch.Begin(samplerState: SamplerState.PointClamp);
+        _spriteBatch.Draw(_renderTarget, _destinationRectangle, Color.White);
+        _spriteBatch.End();
+
+        _spriteBatch.Begin(samplerState: SamplerState.LinearClamp);
+        int cx = _virtualWidth / 2;
+        TextCentered(FontKind.Hero, "WATT NU?", cx, 70, TextLight);
+        TextCentered(FontKind.SubHero, "Houd het slimme stroomnet draaiend.", cx, 150, TextDim);
+        TextCenteredIn(button, FontKind.Strong, "Start Spel", Accent);
+        TextCentered(FontKind.Small, "Klik op Start Spel of druk op Enter.", cx, H - 40, TextDim);
+        _spriteBatch.End();
+    }
+
+    // ============================================================= onboarding screen
+
+    private (Rectangle Box, Rectangle Button) ComputeOnboardingLayout()
+    {
+        int boxW = Math.Clamp(_virtualWidth - 200, 400, 640);
+        const int boxH = 280;
+        var box = new Rectangle((_virtualWidth - boxW) / 2, 230, boxW, boxH);
+        var button = new Rectangle(_virtualWidth / 2 - 110, box.Bottom + 60, 220, 56);
+        return (box, button);
+    }
+
+    private void DrawOnboardingScreen()
+    {
+        (Rectangle box, Rectangle button) = ComputeOnboardingLayout();
+
+        // Cloud rolls in from step 2 onward; the battery (the fix) only
+        // appears once the player reaches the final step. Houses read as
+        // "dimmed" only while the problem is on screen and unresolved.
+        bool showCloud = _onboardingStep >= 1;
+        bool showBattery = _onboardingStep >= 2;
+        bool housesPowered = _onboardingStep != 1;
+
+        GraphicsDevice.SetRenderTarget(_renderTarget);
+        GraphicsDevice.Clear(BgBottom);
+
+        _spriteBatch.Begin(samplerState: SamplerState.PointClamp);
+        Gradient(new Rectangle(0, 0, _virtualWidth, H), BgTop, BgBottom);
+        DrawDiagramBox(box, showCloud, showBattery, housesPowered);
+        DrawButtonChrome(button);
+        _spriteBatch.End();
+
+        GraphicsDevice.SetRenderTarget(null);
+        GraphicsDevice.Clear(Color.Black);
+        _spriteBatch.Begin(samplerState: SamplerState.PointClamp);
+        _spriteBatch.Draw(_renderTarget, _destinationRectangle, Color.White);
+        _spriteBatch.End();
+
+        _spriteBatch.Begin(samplerState: SamplerState.LinearClamp);
+        int cx = _virtualWidth / 2;
+        TextCentered(FontKind.Title, OnboardingLine1[_onboardingStep], cx, 60, TextLight);
+        TextCentered(FontKind.Body, OnboardingLine2[_onboardingStep], cx, 96, TextDim);
+
+        string label = _onboardingStep < OnboardingStepCount - 1 ? "Volgende" : "Start Spel";
+        TextCenteredIn(button, FontKind.Strong, label, Accent);
+
+        TextCentered(FontKind.Small, $"{_onboardingStep + 1} / {OnboardingStepCount}", cx, box.Bottom + 16, TextDim);
+        TextCentered(FontKind.Small, "Klik op de knop of druk op Enter.", cx, H - 40, TextDim);
+        _spriteBatch.End();
+    }
+
+    // ============================================================= shared mini smart-grid diagram
+    //
+    // Draws a small illustrative grid (solar source -> two houses) used by
+    // both the start screen and onboarding. A cloud can partially cover the
+    // solar panel (the "problem"), and a battery can be dropped onto the
+    // branch feeding the second house (the "fix"), mirroring the actual
+    // source/tool/house relationships from real levels.
+
+    private void DrawDiagramBox(Rectangle box, bool showCloud, bool showBattery, bool housesPowered)
+    {
+        Border(box, 2, TextDim);
+
+        int iconSize = Math.Clamp(Math.Min(box.Width, box.Height) / 6, 36, 64);
+        const int lineThickness = 3;
+
+        var solar = new Point(box.X + box.Width / 4, box.Y + box.Height / 2);
+        var house1 = new Point(box.X + box.Width - box.Width / 6, box.Y + box.Height / 5);
+        var house2 = new Point(box.X + box.Width / 2 + box.Width / 10, box.Y + box.Height - box.Height / 5);
+        var battery = new Point(house2.X, box.Y + box.Height / 8);
+
+        int trunkY = solar.Y;
+        int branchTop = showBattery ? battery.Y : trunkY;
+
+        // Horizontal trunk from the solar source across to house 1.
+        Fill(new Rectangle(solar.X, trunkY - lineThickness / 2, house1.X - solar.X, lineThickness), TextDim);
+        // Branch up into house 1.
+        Fill(new Rectangle(house1.X - lineThickness / 2, house1.Y, lineThickness, trunkY - house1.Y), TextDim);
+        // Branch down into house 2 (extends up to the battery when present).
+        Fill(new Rectangle(house2.X - lineThickness / 2, branchTop, lineThickness, house2.Y - branchTop), TextDim);
+
+        Color houseTint = housesPowered ? Color.White : Dim;
+        DrawIcon(Icons.House, house1, iconSize, houseTint);
+        DrawIcon(Icons.House, house2, iconSize, houseTint);
+
+        if (showCloud)
+            DrawIcon(Icons.Cloud, solar, (int)(iconSize * 1.5f), CloudTint);
+
+        DrawIcon(Icons.Solar, solar, iconSize, Color.White);
+
+        if (showBattery)
+            DrawIcon(Icons.Battery, battery, iconSize, Color.White);
+    }
+
+    private void DrawIcon(string key, Point center, int size, Color tint)
+    {
+        var rect = new Rectangle(center.X - size / 2, center.Y - size / 2, size, size);
+        _spriteBatch.Draw(_textures.Get(key), rect, tint);
+    }
+
+    private void DrawButtonChrome(Rectangle button)
+    {
+        Border(button, 2, Accent);
+        Fill(Inset(button, 2), PanelBg);
     }
 
     // ============================================================= tile appearance
@@ -380,6 +608,9 @@ public class Game1 : Game
         Fill(new Rectangle(r.Right - thickness, r.Y, thickness, r.Height), c);
     }
 
+    private static Rectangle Inset(Rectangle r, int amount) =>
+        new(r.X + amount, r.Y + amount, r.Width - amount * 2, r.Height - amount * 2);
+
     private void Gradient(Rectangle r, Color top, Color bottom)
     {
         int steps = Math.Min(r.Height, 96);
@@ -402,6 +633,8 @@ public class Game1 : Game
             FontKind.Body => (_fontSystemRegular, BodyFontSize),
             FontKind.Strong => (_fontSystemBold, StrongFontSize),
             FontKind.Title => (_fontSystemBold, TitleFontSize),
+            FontKind.Hero => (_fontSystemBold, HeroFontSize),
+            FontKind.SubHero => (_fontSystemRegular, SubHeroFontSize),
             _ => throw new ArgumentOutOfRangeException(nameof(kind))
         };
 
@@ -418,6 +651,26 @@ public class Game1 : Game
             _destinationRectangle.X + x * _scale,
             _destinationRectangle.Y + y * _scale);
         _spriteBatch.DrawString(font, text, screenPos, c);
+    }
+
+    /// <summary>Draws text horizontally centered on centerX (logical coordinates).</summary>
+    private void TextCentered(FontKind kind, string text, float centerX, float y, Color c)
+    {
+        DynamicSpriteFont font = GetFont(kind);
+        float logicalWidth = font.MeasureString(text).X / _scale;
+        Text(kind, text, centerX - logicalWidth / 2f, y, c);
+    }
+
+    /// <summary>Draws text centered both horizontally and vertically within a logical rectangle.</summary>
+    private void TextCenteredIn(Rectangle rect, FontKind kind, string text, Color c)
+    {
+        DynamicSpriteFont font = GetFont(kind);
+        Vector2 size = font.MeasureString(text);
+        float logicalW = size.X / _scale;
+        float logicalH = size.Y / _scale;
+        float x = rect.X + (rect.Width - logicalW) / 2f;
+        float y = rect.Y + (rect.Height - logicalH) / 2f;
+        Text(kind, text, x, y, c);
     }
 
     /// <summary>Draws word-wrapped text and returns the logical height it used.</summary>
@@ -466,6 +719,13 @@ public class Game1 : Game
     }
 
     private bool KeyPressed(Keys k) => _keys.IsKeyDown(k) && _prevKeys.IsKeyUp(k);
+
+    private bool MouseClicked =>
+        _mouse.LeftButton == ButtonState.Pressed && _prevMouse.LeftButton == ButtonState.Released;
+
+    /// <summary>True if the given on-screen button was clicked, or Enter/Space was pressed.</summary>
+    private bool Confirmed(Rectangle button) =>
+        (MouseClicked && button.Contains(MousePoint)) || KeyPressed(Keys.Enter) || KeyPressed(Keys.Space);
 
     // ============================================================= window handling
 
