@@ -104,8 +104,8 @@ public class Game1 : Game
 
         if (TryTileAt(MousePoint, out int tx, out int ty))
         {
-            if (LeftClick && _state.SelectedTool.HasValue) grid.Place(tx, ty, _state.SelectedTool.Value);
-            else if (RightClick) grid.Remove(tx, ty);
+            if (_mouse.LeftButton == ButtonState.Pressed && _state.SelectedTool.HasValue) grid.Place(tx, ty, _state.SelectedTool.Value);
+            else if (_mouse.RightButton == ButtonState.Pressed) grid.Remove(tx, ty);
         }
 
         _state.PhaseTimer += dt;
