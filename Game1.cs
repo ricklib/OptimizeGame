@@ -10,6 +10,10 @@ namespace SmartGrid;
 
 public class Game1 : Game
 {
+    //Window scaling
+    private Matrix _scaleMatrix = Matrix.Identity;
+    private Viewport _viewport;
+
     private const int W = 980;
     private const int H = 720;
     private const int InfoH = 130;
@@ -47,6 +51,9 @@ public class Game1 : Game
         _graphics = new GraphicsDeviceManager(this);
         Content.RootDirectory = "Content";
         IsMouseVisible = true;
+
+        //Allow user windows resizing
+        Window.AllowUserResizing = true;
     }
 
     protected override void Initialize()
@@ -55,6 +62,13 @@ public class Game1 : Game
         _graphics.PreferredBackBufferHeight = H;
         _graphics.ApplyChanges();
         Window.Title = "WAT NOU? - hou het stroomnet draaiende";
+
+        // Allow user to resize the window and handle the resize event
+        Window.AllowUserResizing = true;
+        Window.ClientSizeChanged += OnResize;
+
+        UpdateScale();
+
         base.Initialize();
     }
 
@@ -135,8 +149,12 @@ public class Game1 : Game
 
     protected override void Draw(GameTime gameTime)
     {
+        GraphicsDevice.Clear(Color.Black);
+        GraphicsDevice.Viewport = _viewport;
         GraphicsDevice.Clear(BgBottom);
-        _spriteBatch.Begin(samplerState: SamplerState.PointClamp);
+        _spriteBatch.Begin(
+            transformMatrix: _scaleMatrix,
+            samplerState: SamplerState.PointClamp);
         Gradient(new Rectangle(0, 0, W, H), BgTop, BgBottom);
 
         Level level = _state.CurrentLevel;
@@ -325,8 +343,46 @@ public class Game1 : Game
 
     // ========================================================================= input
 
-    private Point MousePoint => new(_mouse.X, _mouse.Y);
+    private Point MousePoint
+    {
+        get
+        {
+            float scale = _scaleMatrix.M11;
+
+            return new Point(
+                (int)((_mouse.X - _viewport.X) / scale),
+                (int)((_mouse.Y - _viewport.Y) / scale));
+        }
+    }
     private bool LeftClick => _mouse.LeftButton == ButtonState.Pressed && _prevMouse.LeftButton == ButtonState.Released;
     private bool RightClick => _mouse.RightButton == ButtonState.Pressed && _prevMouse.RightButton == ButtonState.Released;
     private bool KeyPressed(Keys k) => _keys.IsKeyDown(k) && _prevKeys.IsKeyUp(k);
+
+    // Window scaling
+    private void OnResize(object sender, EventArgs e)
+    {
+        UpdateScale();
+    }
+
+    private void UpdateScale()
+    {
+        PresentationParameters pp = GraphicsDevice.PresentationParameters;
+
+        float scale = Math.Min(
+            pp.BackBufferWidth / (float)W,
+            pp.BackBufferHeight / (float)H);
+
+        int width = (int)(W * scale);
+        int height = (int)(H * scale);
+
+        _viewport = new Viewport(
+            (pp.BackBufferWidth - width) / 2,
+            (pp.BackBufferHeight - height) / 2,
+            width,
+            height);
+
+        GraphicsDevice.Viewport = _viewport;
+
+        _scaleMatrix = Matrix.CreateScale(scale);
+    }
 }
