@@ -15,11 +15,15 @@ public class Game1 : Game
     private const int H = 720;
     private const int InfoH = 130;
     private const int FooterH = 60;
+    private const int SolvedFooterH = 140;
     private const int GridMargin = 40;
     private const int MinTile = 12;
+    private const int ToolbarIconSize = 56;
+    private const int ToolbarSpacing = 14;
     private const int MaxTile = 58;
     private const float PhaseSeconds = 1.7f;
     private const int OnboardingStepCount = 3;
+    private const float LevelCompleteDelaySeconds = 5f;
 
     // Base font sizes, defined in the same 720-tall virtual canvas space as
     // everything else. The actual rasterization size is these values * the
@@ -46,7 +50,7 @@ public class Game1 : Game
 
     private enum FontKind { Small, Body, Strong, Title, Hero, SubHero }
 
-    private enum AppState { Menu, Onboarding, Playing }
+    private enum AppState { Menu, Onboarding, Playing, LevelComplete }
 
     // ============================================================= fields
 
@@ -84,6 +88,14 @@ public class Game1 : Game
     private int _poweredNow;
     private int _totalHouses;
 
+    // True right after a new level starts (either the very first level, or
+    // advancing from the level-complete screen). While true, grid clicks are
+    // ignored so that the mouse button still being held down from clicking
+    // "Doorgaan"/the solved-footer button doesn't immediately place/remove a
+    // tile on the new level the instant it appears. Cleared once both mouse
+    // buttons are observed released.
+    private bool _gridInputLocked;
+
     // Menu / onboarding flow.
     private AppState _appState = AppState.Menu;
     private int _onboardingStep;
@@ -101,6 +113,48 @@ public class Game1 : Game
         "Een wolk voor de zon, een vraagpiek of wegvallende wind.",
         "en ontdek hoe een echte smart grid werkt!",
     };
+
+    // Level-complete flow: how long the "OPGELOST!" state is shown before the
+    // lesson screen appears automatically (Enter skips the wait).
+    private float _solvedTimer;
+
+    // Short heading, "Resultaat" text (solved footer), and "Boodschap" text
+    // (lesson screen) per level, in the same order as Levels.txt. Kept local
+    // to Game1 rather than added to Level/LevelData so it doesn't depend on
+    // their exact shape - move it there if you'd rather keep content and
+    // code together.
+    private static readonly (string Name, string Result, string Lesson)[] LevelLessons =
+    {
+        ("Kapotte kabel",
+            "Het huis heeft weer stroom. Bekijk het resultaat.",
+            "Slimme sensors geven realtime inzicht in storingen, zodat een fout snel gevonden en gemaakt wordt."),
+        ("Wegvallende route",
+            "De stroom wordt automatisch via de andere route omgeleid.",
+            "Een smart grid kan zichzelf gedeeltelijk herstellen."),
+        ("Bewolkte dag",
+            "De batterijen leveren stroom wanneer de zonnepanelen minder produceren.",
+            "Opslag maakt duurzame energie betrouwbaarder."),
+        ("Avondspits",
+            "Geen stroomstoring, ondanks de piek in de vraag.",
+            "Slimme stroomnetwerken kunnen stroomstoringen voorkomen."),
+        ("Wisselende wind",
+            "Je ziet de toekomstige productie aankomen en kunt je voorbereiden.",
+            "Voorspellende software helpt het net stabiel te houden."),
+        ("Stroomtekort",
+            "EV's leveren tijdelijk stroom terug om het tekort op te vangen.",
+            "EV's kunnen onderdeel worden van het energienetwerk en tekorten voorkomen."),
+        ("Virtuele energiecentrale",
+            "Alle apparaten samen functioneren als één grote energiecentrale.",
+            "Software kan duizenden kleine bronnen energie coördineren."),
+        ("Slimme stad",
+            "De stroomvoorziening blijft stabiel en duurzaam.",
+            "Een smart grid combineert duurzame energie met slimme IT-oplossingen."),
+    };
+
+    private static (string Name, string Result, string Lesson) LessonFor(int levelIndex) =>
+        levelIndex >= 0 && levelIndex < LevelLessons.Length
+            ? LevelLessons[levelIndex]
+            : ("Level voltooid", "Goed gedaan!", "Goed gedaan!");
 
     // ============================================================= construction
 
@@ -170,6 +224,9 @@ public class Game1 : Game
             case AppState.Playing:
                 UpdatePlaying(dt);
                 break;
+            case AppState.LevelComplete:
+                UpdateLevelComplete();
+                break;
         }
 
         _prevMouse = _mouse;
@@ -201,6 +258,7 @@ public class Game1 : Game
         _state = new GameState(LevelData.LoadAll());
         _state.BeginAt(_startLevel > 0 ? _startLevel - 1 : 0);
         _appState = AppState.Playing;
+        _gridInputLocked = true;
     }
 
     private void UpdatePlaying(float dt)
@@ -208,15 +266,63 @@ public class Game1 : Game
         Level level = _state.CurrentLevel;
         Grid grid = _state.Grid;
 
-        _layout = ComputeLayout(level);
+        // Uses last frame's _solved so the grid doesn't jump size the same
+        // frame it gets solved; the footer grows a frame later, which is
+        // imperceptible.
+        _layout = ComputeLayout(level, FooterHeightFor(_solved));
 
         HandleLevelHotkeys(level);
+        HandleToolbarInput(level);
         HandleGridInput(grid);
         AdvancePhase(level, dt);
 
+        bool wasSolved = _solved;
         _solved = grid.IsSolved(level);
         _totalHouses = grid.TotalHouses;
         _poweredNow = grid.Simulate(level, _state.DisplayPhase);
+
+        if (_solved)
+        {
+            if (!wasSolved) _solvedTimer = 0f;
+            _solvedTimer += dt;
+
+            // Clicking "Wat heb ik geleerd?" (or Enter/Space) skips the wait;
+            // otherwise the lesson screen appears on its own after the delay.
+            Rectangle solvedButton = ComputeSolvedFooterButton();
+            if (_solvedTimer >= LevelCompleteDelaySeconds || Confirmed(solvedButton))
+                _appState = AppState.LevelComplete;
+        }
+        else
+        {
+            _solvedTimer = 0f;
+        }
+    }
+
+    private static int FooterHeightFor(bool solved) => solved ? SolvedFooterH : FooterH;
+
+    private void UpdateLevelComplete()
+    {
+        Rectangle button = ComputeLevelCompleteButton();
+        if (Confirmed(button))
+            AdvanceAfterLevelComplete();
+    }
+
+    private void AdvanceAfterLevelComplete()
+    {
+        int next = _state.LevelIndex + 1;
+        _solvedTimer = 0f;
+
+        if (next < _state.Levels.Count)
+        {
+            _state.BeginAt(next);
+            _appState = AppState.Playing;
+            _gridInputLocked = true;
+        }
+        else
+        {
+            // Finished the last level - back to the main menu.
+            _appState = AppState.Menu;
+        }
     }
 
     private void HandleLevelHotkeys(Level level)
@@ -234,6 +340,18 @@ public class Game1 : Game
     // tile the cursor passes over, not just on the initial click.
     private void HandleGridInput(Grid grid)
     {
+        if (_gridInputLocked)
+        {
+            // Stay locked until the player has fully released both mouse
+            // buttons at least once - this is what actually discards the
+            // "still held down from confirming the previous screen" state,
+            // rather than just waiting out a single frame.
+            if (_mouse.LeftButton == ButtonState.Released && _mouse.RightButton == ButtonState.Released)
+                _gridInputLocked = false;
+            else
+                return;
+        }
+
         if (!TryTileAt(MousePoint, out int tx, out int ty))
             return;
 
@@ -242,6 +360,44 @@ public class Game1 : Game
         else if (_mouse.RightButton == ButtonState.Pressed)
             grid.Remove(tx, ty);
     }
+
+    // A single click (not a drag) selects a tool, mirroring the 1-9 hotkeys -
+    // this is what lets the whole level be played with the mouse alone.
+    private void HandleToolbarInput(Level level)
+    {
+        if (!MouseClicked)
+            return;
+
+        foreach ((ToolType tool, Rectangle rect) in ComputeToolbarItems(level))
+        {
+            if (rect.Contains(MousePoint))
+            {
+                _state.SelectedTool = tool;
+                return;
+            }
+        }
+    }
+
+    /// <summary>
+    /// Vertical stack of tool swatches along the left edge, below the info
+    /// bar. Shared by the click-hit-test in Update and the two draw passes
+    /// so all three always agree on the same geometry.
+    /// </summary>
+    private List<(ToolType Tool, Rectangle Rect)> ComputeToolbarItems(Level level)
+    {
+        var items = new List<(ToolType, Rectangle)>();
+        int x = GridMargin;
+        int y = InfoH + 20;
+        foreach (ToolType tool in level.Tools)
+        {
+            items.Add((tool, new Rectangle(x, y, ToolbarIconSize, ToolbarIconSize)));
+            y += ToolbarIconSize + ToolbarSpacing;
+        }
+        return items;
+    }
+
+    /// <summary>Total horizontal space the toolbar column reserves, including margins on both sides.</summary>
+    private static int ToolbarReservedWidth => GridMargin + ToolbarIconSize + GridMargin;
 
     private void AdvancePhase(Level level, float dt)
     {
@@ -275,6 +431,9 @@ public class Game1 : Game
             case AppState.Playing:
                 DrawPlayingScreen();
                 break;
+            case AppState.LevelComplete:
+                DrawLevelCompleteScreen();
+                break;
         }
 
         base.Draw(gameTime);
@@ -285,6 +444,7 @@ public class Game1 : Game
         Level level = _state.CurrentLevel;
         Grid grid = _state.Grid;
         Phase phase = level.Phases[_state.DisplayPhase];
+        int footerHeight = FooterHeightFor(_solved);
 
         // Pass 1: pixel-art scene (background, grid slots, icons) rendered to
         // the virtual canvas. Scaling this up with point-filtering is what
@@ -297,7 +457,10 @@ public class Game1 : Game
         _spriteBatch.Begin(samplerState: SamplerState.PointClamp);
         Gradient(new Rectangle(0, 0, _virtualWidth, H), BgTop, BgBottom);
         DrawInfoBarBackground();
+        DrawToolbar(level);
         DrawGrid(grid, level, phase);
+        if (_solved)
+            DrawSolvedFooterBackground(footerHeight);
         _spriteBatch.End();
 
         GraphicsDevice.SetRenderTarget(null);
@@ -313,8 +476,40 @@ public class Game1 : Game
         // glyph like it would be if it went through the low-res render target.
         _spriteBatch.Begin(samplerState: SamplerState.LinearClamp);
         DrawInfoBarText(level, phase);
-        DrawFooterText();
+        DrawToolbarLabels(level);
+        if (_solved)
+            DrawSolvedFooterText(footerHeight);
+        else
+            DrawFooterText();
         _spriteBatch.End();
+    }
+
+    // ============================================================= toolbar (mouse tool picker)
+
+    private void DrawToolbar(Level level)
+    {
+        foreach ((ToolType tool, Rectangle rect) in ComputeToolbarItems(level))
+        {
+            bool selected = _state.SelectedTool == tool;
+            Fill(rect, selected ? new Color(60, 74, 100) : SlotEmpty);
+
+            string key = Icons.KeyFor(tool);
+            int pad = rect.Width / 6;
+            var icon = new Rectangle(rect.X + pad, rect.Y + pad, rect.Width - pad * 2, rect.Height - pad * 2);
+            _spriteBatch.Draw(_textures.Get(key), icon, Color.White);
+
+            if (selected)
+                Border(rect, 2, Accent);
+            else if (rect.Contains(MousePoint))
+                Border(rect, 2, new Color(150, 190, 230));
+        }
+    }
+
+    private void DrawToolbarLabels(Level level)
+    {
+        var items = ComputeToolbarItems(level);
+        for (int i = 0; i < items.Count; i++)
+            Text(FontKind.Small, (i + 1).ToString(), items[i].Rect.X + 4, items[i].Rect.Y + 2, TextDim);
     }
 
     private void DrawInfoBarBackground()
@@ -324,9 +519,7 @@ public class Game1 : Game
 
     private void DrawInfoBarText(Level level, Phase phase)
     {
-        const int padding = 16;
-        const int panelWidth = 360;
-        int rightX = _virtualWidth - panelWidth;
+        int rightX = _virtualWidth - 360;
 
         Text(FontKind.Strong, $"LEVEL {_state.LevelIndex + 1} / {_state.Levels.Count}", 24, 10, Accent);
         Text(FontKind.Title, level.Title, 24, 28, TextLight);
@@ -338,15 +531,6 @@ public class Game1 : Game
         bool allPowered = _totalHouses > 0 && _poweredNow >= _totalHouses;
         Text(FontKind.Strong, "FASE: " + phase.Name, rightX, 14, Accent);
         Text(FontKind.Body, $"{_poweredNow} / {_totalHouses} huizen met stroom", rightX, 40, allPowered ? Accent : Warm);
-
-        if (_solved)
-            WrappedText(
-                FontKind.Strong,
-                "OPGELOST! (druk op \u2192 voor het volgende level)",
-                rightX + padding,
-                66,
-                panelWidth - padding * 2,
-                Accent);
     }
 
     private void DrawGrid(Grid grid, Level level, Phase phase)
@@ -387,6 +571,43 @@ public class Game1 : Game
             "Linkermuisknop: plaatsen  \u00b7  rechtermuisknop: weghalen  \u00b7  cijfertoetsen: kies gereedschap  " +
             "\u00b7  R: level opnieuw  \u00b7  \u2190/\u2192: level wisselen",
             24, H - 30, TextDim);
+    }
+
+    // ============================================================= solved footer
+
+    private Rectangle ComputeSolvedFooterButton()
+    {
+        const int w = 260;
+        const int h = 56;
+        int bandTop = H - SolvedFooterH;
+        int x = _virtualWidth - GridMargin - w;
+        int y = bandTop + (SolvedFooterH - h) / 2;
+        return new Rectangle(x, y, w, h);
+    }
+
+    private void DrawSolvedFooterBackground(int footerHeight)
+    {
+        int bandTop = H - footerHeight;
+        Fill(new Rectangle(0, bandTop, _virtualWidth, footerHeight), PanelBg);
+        Fill(new Rectangle(0, bandTop, _virtualWidth, 2), TextDim);
+
+        var badgeCenter = new Point(GridMargin + 30, bandTop + footerHeight / 2);
+        DrawCheckBadge(badgeCenter, 30, 3, Accent, BgBottom);
+
+        DrawButtonChrome(ComputeSolvedFooterButton());
+    }
+
+    private void DrawSolvedFooterText(int footerHeight)
+    {
+        (_, string result, _) = LessonFor(_state.LevelIndex);
+        Rectangle button = ComputeSolvedFooterButton();
+        int bandTop = H - footerHeight;
+        int textX = GridMargin + 70;
+
+        Text(FontKind.Title, "Opgelost!", textX, bandTop + 22, TextLight);
+        WrappedText(FontKind.Small, result, textX, bandTop + 58, button.X - textX - 24, TextDim);
+
+        TextCenteredIn(button, FontKind.Strong, "Wat heb ik geleerd?", Accent);
     }
 
     // ============================================================= menu screen
@@ -476,6 +697,84 @@ public class Game1 : Game
         TextCentered(FontKind.Small, $"{_onboardingStep + 1} / {OnboardingStepCount}", cx, box.Bottom + 16, TextDim);
         TextCentered(FontKind.Small, "Klik op de knop of druk op Enter.", cx, H - 40, TextDim);
         _spriteBatch.End();
+    }
+
+    // ============================================================= level complete screen
+
+    private Rectangle ComputeLevelCompleteButton() =>
+        new(_virtualWidth / 2 - 110, 470, 220, 56);
+
+    private void DrawLevelCompleteScreen()
+    {
+        (string name, _, string lesson) = LessonFor(_state.LevelIndex);
+        Rectangle button = ComputeLevelCompleteButton();
+        int cx = _virtualWidth / 2;
+        var badgeCenter = new Point(cx, 150);
+        const int badgeRadius = 42;
+
+        GraphicsDevice.SetRenderTarget(_renderTarget);
+        GraphicsDevice.Clear(BgBottom);
+
+        _spriteBatch.Begin(samplerState: SamplerState.PointClamp);
+        Gradient(new Rectangle(0, 0, _virtualWidth, H), BgTop, BgBottom);
+        DrawCheckBadge(badgeCenter, badgeRadius, 3, Accent, PanelBg);
+        DrawButtonChrome(button);
+        _spriteBatch.End();
+
+        GraphicsDevice.SetRenderTarget(null);
+        GraphicsDevice.Clear(Color.Black);
+        _spriteBatch.Begin(samplerState: SamplerState.PointClamp);
+        _spriteBatch.Draw(_renderTarget, _destinationRectangle, Color.White);
+        _spriteBatch.End();
+
+        _spriteBatch.Begin(samplerState: SamplerState.LinearClamp);
+        TextCentered(FontKind.Title, "Wat je hebt geleerd", cx, 220, TextLight);
+        TextCentered(FontKind.Strong, name, cx, 254, Accent);
+        WrappedTextCentered(FontKind.Body, lesson, cx, 296, Math.Min(560, _virtualWidth - 160), TextDim);
+        TextCenteredIn(button, FontKind.Strong, "Doorgaan", Accent);
+        TextCentered(FontKind.Small, "Klik op Doorgaan of druk op Enter.", cx, H - 40, TextDim);
+        _spriteBatch.End();
+    }
+
+    // ============================================================= badge / checkmark drawing
+
+    private void DrawCheckBadge(Point center, int radius, int ringThickness, Color ringColor, Color fillColor)
+    {
+        FillCircle(center, radius, ringColor);
+        FillCircle(center, radius - ringThickness, fillColor);
+        DrawCheckmark(center, radius, ringColor);
+    }
+
+    private void DrawCheckmark(Point center, int radius, Color c)
+    {
+        int thickness = Math.Max(2, radius / 8);
+        float s = radius * 0.5f;
+        var p1 = new Vector2(center.X - s, center.Y + 0.1f * s);
+        var p2 = new Vector2(center.X - 0.15f * s, center.Y + s * 0.7f);
+        var p3 = new Vector2(center.X + s, center.Y - s * 0.6f);
+        Line(p1, p2, thickness, c);
+        Line(p2, p3, thickness, c);
+    }
+
+    private void FillCircle(Point center, int radius, Color c)
+    {
+        for (int y = -radius; y <= radius; y++)
+        {
+            int dx = (int)Math.Sqrt(Math.Max(0, radius * radius - y * y));
+            Fill(new Rectangle(center.X - dx, center.Y + y, dx * 2, 1), c);
+        }
+    }
+
+    // Draws a thickness-tall line from `from` to `to` by stretching and
+    // rotating the 1x1 pixel texture - lets us draw the checkmark strokes
+    // at arbitrary angles without needing a dedicated icon asset.
+    private void Line(Vector2 from, Vector2 to, int thickness, Color c)
+    {
+        Vector2 diff = to - from;
+        float length = diff.Length();
+        if (length < 0.001f) return;
+        float angle = (float)Math.Atan2(diff.Y, diff.X);
+        _spriteBatch.Draw(_pixel, from, null, c, angle, Vector2.Zero, new Vector2(length, thickness), SpriteEffects.None, 0f);
     }
 
     // ============================================================= shared mini smart-grid diagram
@@ -572,17 +871,18 @@ public class Game1 : Game
     /// between the info bar and footer (up to MaxTile) and centering the
     /// result both horizontally and vertically within that space.
     /// </summary>
-    private (int OffsetX, int OffsetY, int TileSize) ComputeLayout(Level level)
+    private (int OffsetX, int OffsetY, int TileSize) ComputeLayout(Level level, int footerHeight)
     {
         int top = InfoH + 12;
-        int availW = _virtualWidth - GridMargin * 2;
-        int availH = H - FooterH - top;
+        int left = ToolbarReservedWidth;
+        int availW = _virtualWidth - left - GridMargin;
+        int availH = H - footerHeight - top;
 
         int tileByWidth = availW / Math.Max(level.Width, 1);
         int tileByHeight = availH / Math.Max(level.Height, 1);
         int tile = Math.Clamp(Math.Min(tileByWidth, tileByHeight), MinTile, MaxTile);
 
-        int ox = (_virtualWidth - level.Width * tile) / 2;
+        int ox = left + (availW - level.Width * tile) / 2;
         int oy = top + (availH - level.Height * tile) / 2;
 
         return (ox, oy, tile);
@@ -671,6 +971,18 @@ public class Game1 : Game
         float x = rect.X + (rect.Width - logicalW) / 2f;
         float y = rect.Y + (rect.Height - logicalH) / 2f;
         Text(kind, text, x, y, c);
+    }
+
+    /// <summary>Draws word-wrapped text, centering each line on centerX.</summary>
+    private void WrappedTextCentered(FontKind kind, string text, float centerX, float y, float maxWidth, Color c)
+    {
+        DynamicSpriteFont font = GetFont(kind);
+        float logicalLineHeight = font.MeasureString("Ag").Y / _scale;
+        foreach (string line in WrapLines(font, text, maxWidth * _scale))
+        {
+            TextCentered(kind, line, centerX, y, c);
+            y += logicalLineHeight;
+        }
     }
 
     /// <summary>Draws word-wrapped text and returns the logical height it used.</summary>
