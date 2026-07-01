@@ -1,0 +1,15 @@
+```
+Content/Textures/house.png
+Content/Textures/broken_cable.png
+Content/Textures/sources/generator.png
+Content/Textures/sources/solar.png
+Content/Textures/sources/wind.png
+Content/Textures/tools/cable.png
+Content/Textures/tools/sensor.png
+Content/Textures/tools/switch.png
+Content/Textures/tools/battery.png
+Content/Textures/tools/smart_meter.png
+Content/Textures/tools/predictor.png
+Content/Textures/tools/v2g.png
+Content/Textures/fx/cloud.png
+```

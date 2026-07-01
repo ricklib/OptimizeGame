@@ -1,0 +1,89 @@
+=== LEVEL ===
+title: Kapotte kabel
+problem: Het huis is donker, maar de kabel ziet er heel uit. Ergens zit een onzichtbare breuk.
+goal: Plaats sensors langs de kabel om de breuk te vinden en repareer hem met een kabel.
+tools: sensor, cable
+message: Slimme sensors geven realtime inzicht in storingen, zodat een fout snel gevonden en gemaakt wordt.
+phase: Normaal
+map:
+............
+............
+.G##x####H..
+............
+............
+
+=== LEVEL ===
+title: Omleiden bij uitval
+problem: De bovenste route is uitgevallen door een storing en het huis zit zonder stroom.
+goal: Plaats de automatische schakelaar op de splitsing zodat de stroom via de andere route gaat.
+tools: switch
+message: Een smart grid herstelt zich deels vanzelf: schakelaars leiden stroom automatisch om langs een werkende route.
+phase: Normaal
+map:
+...........
+.#######x#.
+.G.......H.
+.#.#######.
+...........
+
+=== LEVEL ===
+title: Bewolkte dag
+problem: Een wolk schuift voor het zonnepaneel. Dan valt de productie even helemaal weg.
+goal: Plaats een batterij tussen het paneel en de huizen, zodat opgeslagen stroom de wolk overbrugt.
+tools: battery
+message: Opslag maakt duurzame energie betrouwbaar: een batterij vangt de momenten op dat de zon niet schijnt.
+phase: Normaal | solar=100 demand=30
+phase: Wolk | solar=0 demand=30
+map:
+............
+.S##.#####..
+......H.H...
+............
+
+=== LEVEL ===
+title: Avondspits
+problem: In de avondspits zetten alle huizen tegelijk apparaten aan. De centrale kan de piek niet aan.
+goal: Plaats vraagsturing (een slimme meter) op het net zodat de piek wordt afgevlakt.
+tools: meter
+message: Slimme netwerken sturen de vraag: door de piek af te vlakken voorkom je storingen zonder extra centrale.
+phase: Normaal | generator=100 demand=30
+phase: Avondspits | generator=100 demand=50
+map:
+............
+.G#######...
+...H.H.H....
+............
+............
+
+=== LEVEL ===
+title: Wind valt weg
+problem: De wind gaat straks liggen; dan levert de turbine niets. Een batterij die te laat oplaadt is te laat.
+goal: Plaats de AI-voorspeller EN een batterij, zodat de batterij voor de dip al is opgeladen.
+tools: predictor, battery
+message: Voorspellende software houdt het net stabiel: wie de dip ziet aankomen, laadt op tijd de batterij op.
+phase: Normaal | wind=100 demand=30
+phase: Windstilte | wind=0 demand=30 predictor
+map:
+............
+.W##.####...
+......H.H...
+............
+............
+
+=== LEVEL ===
+title: Kleine slimme stad
+problem: Een wijk op zon en wind. Bij een wolk, bij windstilte en 's nachts moet iedereen toch stroom houden.
+goal: Verbind de windturbine met het net en zorg voor opslag, zodat elke gebeurtenis wordt opgevangen.
+tools: cable, sensor, switch, battery, meter, predictor, v2g
+message: Een smart grid combineert duurzame bronnen met slimme IT: samen leveren ze altijd en overal stroom.
+phase: Normaal | solar=100 wind=100 demand=30
+phase: Wolk | solar=0 wind=100 demand=30
+phase: Windstilte | solar=100 wind=0 demand=30
+phase: Nacht | solar=0 wind=0 demand=20
+map:
+............
+..S#####.W..
+...#.#.#....
+...H.H.H....
+............
+............
