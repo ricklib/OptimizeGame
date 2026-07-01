@@ -458,6 +458,7 @@ public class Game1 : Game
         Gradient(new Rectangle(0, 0, _virtualWidth, H), BgTop, BgBottom);
         DrawInfoBarBackground();
         DrawToolbar(level);
+        DrawToolbarTooltipBackground(level);
         DrawGrid(grid, level, phase);
         if (_solved)
             DrawSolvedFooterBackground(footerHeight);
@@ -477,6 +478,7 @@ public class Game1 : Game
         _spriteBatch.Begin(samplerState: SamplerState.LinearClamp);
         DrawInfoBarText(level, phase);
         DrawToolbarLabels(level);
+        DrawToolbarTooltipText(level);
         if (_solved)
             DrawSolvedFooterText(footerHeight);
         else
@@ -510,6 +512,65 @@ public class Game1 : Game
         var items = ComputeToolbarItems(level);
         for (int i = 0; i < items.Count; i++)
             Text(FontKind.Small, (i + 1).ToString(), items[i].Rect.X + 4, items[i].Rect.Y + 2, TextDim);
+    }
+
+    /// <summary>Returns the toolbar item currently under the mouse, if any.</summary>
+    private (ToolType Tool, Rectangle Rect)? HoveredToolbarItem(Level level)
+    {
+        foreach ((ToolType tool, Rectangle rect) in ComputeToolbarItems(level))
+            if (rect.Contains(MousePoint))
+                return (tool, rect);
+        return null;
+    }
+
+    private const int TooltipMaxTextWidth = 220;
+    private const int TooltipPadding = 10;
+
+    /// <summary>
+    /// Layout (box + text) for the tooltip shown while hovering a toolbar
+    /// item, or null if nothing is hovered. Shared by the background and
+    /// text draw passes so they always agree on the same box.
+    /// </summary>
+    private (Rectangle Box, string Text)? ComputeToolbarTooltip(Level level)
+    {
+        (ToolType Tool, Rectangle Rect)? hovered = HoveredToolbarItem(level);
+        if (hovered == null)
+            return null;
+
+        ToolType tool = hovered.Value.Tool;
+        Rectangle itemRect = hovered.Value.Rect;
+        string text = $"{Tool.Name(tool)}: {Tool.Hint(tool)}";
+
+        int textHeight = (int)Math.Ceiling(MeasureWrappedHeight(FontKind.Small, text, TooltipMaxTextWidth));
+        int boxW = TooltipMaxTextWidth + TooltipPadding * 2;
+        int boxH = textHeight + TooltipPadding * 2;
+
+        int x = itemRect.Right + 12;
+        int y = itemRect.Y;
+        // Keep the tooltip fully on-screen vertically; it never needs
+        // horizontal clamping since the toolbar sits against the left edge.
+        y = Math.Clamp(y, 8, H - boxH - 8);
+
+        return (new Rectangle(x, y, boxW, boxH), text);
+    }
+
+    private void DrawToolbarTooltipBackground(Level level)
+    {
+        (Rectangle Box, string Text)? tooltip = ComputeToolbarTooltip(level);
+        if (tooltip == null) return;
+
+        Fill(tooltip.Value.Box, PanelBg);
+        Border(tooltip.Value.Box, 2, Accent);
+    }
+
+    private void DrawToolbarTooltipText(Level level)
+    {
+        (Rectangle Box, string Text)? tooltip = ComputeToolbarTooltip(level);
+        if (tooltip == null) return;
+
+        Rectangle box = tooltip.Value.Box;
+        WrappedText(FontKind.Small, tooltip.Value.Text, box.X + TooltipPadding, box.Y + TooltipPadding,
+            box.Width - TooltipPadding * 2, TextLight);
     }
 
     private void DrawInfoBarBackground()
@@ -742,18 +803,9 @@ public class Game1 : Game
     {
         FillCircle(center, radius, ringColor);
         FillCircle(center, radius - ringThickness, fillColor);
-        DrawCheckmark(center, radius, ringColor);
-    }
-
-    private void DrawCheckmark(Point center, int radius, Color c)
-    {
-        int thickness = Math.Max(2, radius / 8);
-        float s = radius * 0.5f;
-        var p1 = new Vector2(center.X - s, center.Y + 0.1f * s);
-        var p2 = new Vector2(center.X - 0.15f * s, center.Y + s * 0.7f);
-        var p3 = new Vector2(center.X + s, center.Y - s * 0.6f);
-        Line(p1, p2, thickness, c);
-        Line(p2, p3, thickness, c);
+        // The checkmark icon is white/alpha art, tinted here to match the
+        // ring color, same as every other icon drawn via DrawIcon.
+        DrawIcon(Icons.Check, center, (int)(radius * 1.3f), ringColor);
     }
 
     private void FillCircle(Point center, int radius, Color c)
@@ -763,18 +815,6 @@ public class Game1 : Game
             int dx = (int)Math.Sqrt(Math.Max(0, radius * radius - y * y));
             Fill(new Rectangle(center.X - dx, center.Y + y, dx * 2, 1), c);
         }
-    }
-
-    // Draws a thickness-tall line from `from` to `to` by stretching and
-    // rotating the 1x1 pixel texture - lets us draw the checkmark strokes
-    // at arbitrary angles without needing a dedicated icon asset.
-    private void Line(Vector2 from, Vector2 to, int thickness, Color c)
-    {
-        Vector2 diff = to - from;
-        float length = diff.Length();
-        if (length < 0.001f) return;
-        float angle = (float)Math.Atan2(diff.Y, diff.X);
-        _spriteBatch.Draw(_pixel, from, null, c, angle, Vector2.Zero, new Vector2(length, thickness), SpriteEffects.None, 0f);
     }
 
     // ============================================================= shared mini smart-grid diagram
@@ -997,6 +1037,17 @@ public class Game1 : Game
             y += logicalLineHeight;
         }
         return y - startY;
+    }
+
+    /// <summary>Measures the logical height word-wrapped text would take, without drawing it.</summary>
+    private float MeasureWrappedHeight(FontKind kind, string text, float maxWidth)
+    {
+        DynamicSpriteFont font = GetFont(kind);
+        float logicalLineHeight = font.MeasureString("Ag").Y / _scale;
+        int lineCount = 0;
+        foreach (string _ in WrapLines(font, text, maxWidth * _scale))
+            lineCount++;
+        return lineCount * logicalLineHeight;
     }
 
     private static IEnumerable<string> WrapLines(DynamicSpriteFont font, string text, float maxWidth)

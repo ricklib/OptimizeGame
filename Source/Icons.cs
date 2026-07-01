@@ -1,7 +1,5 @@
 using Microsoft.Xna.Framework;
-
 namespace SmartGrid;
-
 public static class Icons
 {
     // World / source tiles
@@ -10,7 +8,6 @@ public static class Icons
     public const string Wind = "sources/wind";
     public const string House = "house";
     public const string BrokenCable = "broken_cable";
-
     // Placed IT tools
     public const string Cable = "tools/cable";
     public const string Sensor = "tools/sensor";
@@ -19,17 +16,16 @@ public static class Icons
     public const string SmartMeter = "tools/smart_meter";
     public const string Predictor = "tools/predictor";
     public const string V2G = "tools/v2g";
-
     // Event overlays
     public const string Cloud = "fx/cloud";
-
+    public const string Check = "fx/check";
     private static readonly Color GeneratorColor = new(232, 156, 92);
     private static readonly Color SolarColor = new(255, 201, 66);
     private static readonly Color WindColor = new(214, 222, 236);
     private static readonly Color HouseColor = new(236, 200, 132);
     private static readonly Color BrokenCableColor = new(222, 86, 72);
     private static readonly Color CloudColor = new(225, 230, 240);
-
+    private static readonly Color CheckColor = new(255, 255, 255);
     public static Color FallbackColorFor(string key) => key switch
     {
         Generator => GeneratorColor,
@@ -38,6 +34,7 @@ public static class Icons
         House => HouseColor,
         BrokenCable => BrokenCableColor,
         Cloud => CloudColor,
+        Check => CheckColor,
         Cable => Tool.Tint(ToolType.Cable),
         Sensor => Tool.Tint(ToolType.Sensor),
         Switch => Tool.Tint(ToolType.Switch),
@@ -47,7 +44,6 @@ public static class Icons
         V2G => Tool.Tint(ToolType.V2G),
         _ => TextureLibrary.UnknownKeyColor
     };
-
     public static string KeyFor(ToolType tool) => tool switch
     {
         ToolType.Cable => Cable,
