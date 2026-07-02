@@ -39,7 +39,6 @@ public class Game1 : Game
     private static readonly Color BgTop = new(34, 41, 60);
     private static readonly Color BgBottom = new(17, 21, 33);
     private static readonly Color SlotEmpty = new(40, 48, 68);
-    private static readonly Color SlotCable = new(58, 50, 40);
     private static readonly Color TextLight = new(234, 240, 250);
     private static readonly Color TextDim = new(160, 170, 192);
     private static readonly Color Accent = new(150, 230, 170);
@@ -1024,7 +1023,7 @@ public class Game1 : Game
         (t.Type == TileType.Cable && !t.Placed.HasValue) ||
         (t.Type == TileType.BrokenCable && t.Repaired);
 
-    private static Color SlotColor(Tile t) => IsWireTile(t) ? SlotCable : SlotEmpty;
+    private static Color SlotColor(Tile t) => SlotEmpty;
 
     private static Color IconTint(Tile t, Phase phase)
     {
