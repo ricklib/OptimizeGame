@@ -495,10 +495,22 @@ public class Game1 : Game
             bool selected = _state.SelectedTool == tool;
             Fill(rect, selected ? new Color(60, 74, 100) : SlotEmpty);
 
-            string key = Icons.KeyFor(tool);
             int pad = rect.Width / 6;
             var icon = new Rectangle(rect.X + pad, rect.Y + pad, rect.Width - pad * 2, rect.Height - pad * 2);
-            _spriteBatch.Draw(_textures.Get(key), icon, Color.White);
+
+            if (tool == ToolType.Cable)
+            {
+                // Show the same procedurally-generated wire used on the grid
+                // (as a crossroad, since the toolbar swatch has no real
+                // neighbours to react to) instead of a static texture.
+                int thickness = Math.Max(4, icon.Width / 4);
+                DrawWireShape(icon, up: true, down: true, left: true, right: true, thickness, WireColor);
+            }
+            else
+            {
+                string key = Icons.KeyFor(tool);
+                _spriteBatch.Draw(_textures.Get(key), icon, Color.White);
+            }
 
             if (selected)
                 Border(rect, 2, Accent);
@@ -598,16 +610,37 @@ public class Game1 : Game
     {
         (int ox, int oy, int tile) = _layout;
 
+        // Three passes, in this order on purpose: backgrounds first, then
+        // connectors (whose arms may reach into a neighbouring object's
+        // tile), then icons last so a connector's tip ends up tucked behind
+        // the object it's plugging into instead of floating in open space
+        // or getting painted over by that tile's own background fill.
+
+        for (int y = 0; y < level.Height; y++)
+            for (int x = 0; x < level.Width; x++)
+                Fill(SlotRect(ox, oy, tile, x, y), SlotColor(grid.At(x, y)));
+
         for (int y = 0; y < level.Height; y++)
             for (int x = 0; x < level.Width; x++)
             {
                 Tile t = grid.At(x, y);
-                var slot = new Rectangle(ox + x * tile + 2, oy + y * tile + 2, tile - 4, tile - 4);
-                Fill(slot, SlotColor(t));
+                // Not just wire tiles: any tile that actually conducts draws
+                // its own connector arms, since two objects sitting directly
+                // next to each other (say a Generator against a Battery,
+                // with no cable tile between them) transfer power to one
+                // another too and should visibly show that link.
+                if (t.Conducts)
+                    DrawWire(grid, x, y, SlotRect(ox, oy, tile, x, y), tile);
+            }
 
+        for (int y = 0; y < level.Height; y++)
+            for (int x = 0; x < level.Width; x++)
+            {
+                Tile t = grid.At(x, y);
                 string key = IconFor(t);
                 if (key == null) continue;
 
+                Rectangle slot = SlotRect(ox, oy, tile, x, y);
                 Color tint = IconTint(t, phase);
                 int pad = tile / 6;
                 var icon = new Rectangle(slot.X + pad, slot.Y + pad, slot.Width - pad * 2, slot.Height - pad * 2);
@@ -615,10 +648,102 @@ public class Game1 : Game
             }
 
         if (TryTileAt(MousePoint, out int hx, out int hy))
-        {
-            var hoverSlot = new Rectangle(ox + hx * tile + 2, oy + hy * tile + 2, tile - 4, tile - 4);
-            Border(hoverSlot, 2, new Color(150, 190, 230));
-        }
+            Border(SlotRect(ox, oy, tile, hx, hy), 2, new Color(150, 190, 230));
+    }
+
+    private static Rectangle SlotRect(int ox, int oy, int tile, int x, int y) =>
+        new(ox + x * tile + 2, oy + y * tile + 2, tile - 4, tile - 4);
+
+    // ============================================================= procedural wire rendering
+    //
+    // Connectors are drawn on the fly instead of from a texture: every
+    // conducting tile - a wire, but also a source, a placed tool, or
+    // anything else that carries power - looks at whether its four
+    // neighbours actually conduct (the same check the simulation itself
+    // uses) and draws a hub plus one arm per connected side. Because the
+    // arms all meet at a shared center hub, straight runs, corners,
+    // T-junctions, crossroads, and dead-end stubs all fall out of the same
+    // code automatically - there's no separate case for each shape, and no
+    // separate case for "wire meets wire" vs. "object meets object".
+    //
+    // An arm's length also depends on what it's connecting to: wire-to-wire
+    // stops at the shared tile edge (the neighbour draws its own matching
+    // arm, so together they form one continuous line), while anything-to-
+    // object (a source, a placed tool, or a house) reaches all the way to
+    // that neighbour's tile center, so it visually plugs into the icon
+    // drawn there instead of stopping short at the boundary.
+
+    private static readonly Color WireColor = Tool.Tint(ToolType.Cable);
+    private static readonly Color WireShadow = Color.Lerp(WireColor, Color.Black, 0.4f);
+
+    private void DrawWire(Grid grid, int x, int y, Rectangle slot, int tileSize)
+    {
+        int cx = slot.X + slot.Width / 2;
+        int cy = slot.Y + slot.Height / 2;
+
+        int upLen = WireArmLength(grid, x, y - 1, cy - slot.Y, tileSize);
+        int downLen = WireArmLength(grid, x, y + 1, slot.Bottom - cy, tileSize);
+        int leftLen = WireArmLength(grid, x - 1, y, cx - slot.X, tileSize);
+        int rightLen = WireArmLength(grid, x + 1, y, slot.Right - cx, tileSize);
+
+        int thickness = Math.Max(4, tileSize / 4);
+
+        // A slightly thicker, darker pass first gives the wire a subtle
+        // outline/shadow so it reads clearly against the slot background,
+        // then the real-color pass on top gives it its copper look.
+        DrawWireArms(cx, cy, upLen, downLen, leftLen, rightLen, thickness + 4, WireShadow);
+        DrawWireArms(cx, cy, upLen, downLen, leftLen, rightLen, thickness, WireColor);
+    }
+
+    /// <summary>
+    /// How far (in pixels from this wire's center) the arm toward tile
+    /// (nx, ny) should reach: 0 if there's nothing to connect to, toEdge for
+    /// another wire tile, or toNeighbourCenter to visually plug into an
+    /// object (source, placed tool, or house) sitting in that tile.
+    /// </summary>
+    private static int WireArmLength(Grid grid, int nx, int ny, int toEdge, int toNeighbourCenter)
+    {
+        if (!grid.InBounds(nx, ny)) return 0;
+        Tile neighbour = grid.At(nx, ny);
+
+        // Houses are always a visual connection point, even though a house
+        // tile itself doesn't conduct (only its conducting neighbours do).
+        if (neighbour.Type == TileType.House) return toNeighbourCenter;
+
+        if (!neighbour.Conducts) return 0;
+        return IsWireTile(neighbour) ? toEdge : toNeighbourCenter;
+    }
+
+    /// <summary>Draws a wire hub plus one arm per connected direction, centered on (cx, cy).</summary>
+    private void DrawWireArms(int cx, int cy, int upLen, int downLen, int leftLen, int rightLen, int thickness, Color color)
+    {
+        int half = thickness / 2;
+
+        Fill(new Rectangle(cx - half, cy - half, thickness, thickness), color); // center hub
+
+        if (upLen > 0) Fill(new Rectangle(cx - half, cy - upLen, thickness, upLen + half), color);
+        if (downLen > 0) Fill(new Rectangle(cx - half, cy - half, thickness, downLen + half), color);
+        if (leftLen > 0) Fill(new Rectangle(cx - leftLen, cy - half, leftLen + half, thickness), color);
+        if (rightLen > 0) Fill(new Rectangle(cx - half, cy - half, rightLen + half, thickness), color);
+    }
+
+    /// <summary>
+    /// Boolean-direction convenience wrapper around DrawWireArms, for the
+    /// toolbar's self-contained Cable preview icon (which has no real
+    /// neighbours to react to, just "show all four arms").
+    /// </summary>
+    private void DrawWireShape(Rectangle bounds, bool up, bool down, bool left, bool right, int thickness, Color color)
+    {
+        int cx = bounds.X + bounds.Width / 2;
+        int cy = bounds.Y + bounds.Height / 2;
+
+        DrawWireArms(
+            cx, cy,
+            up ? cy - bounds.Y : 0,
+            down ? bounds.Bottom - cy : 0,
+            left ? cx - bounds.X : 0,
+            right ? bounds.Right - cx : 0,
+            thickness, color);
     }
 
     private void DrawFooterText()
@@ -803,9 +928,9 @@ public class Game1 : Game
     {
         FillCircle(center, radius, ringColor);
         FillCircle(center, radius - ringThickness, fillColor);
-        // The checkmark icon is white/alpha art, tinted here to match the
-        // ring color, same as every other icon drawn via DrawIcon.
-        DrawIcon(Icons.Check, center, (int)(radius * 1.3f), ringColor);
+        // The checkmark texture is already drawn in the game's accent green,
+        // so it's drawn at full color here instead of being tinted.
+        DrawIcon(Icons.Check, center, (int)(radius * 1.3f), Color.White);
     }
 
     private void FillCircle(Point center, int radius, Color c)
@@ -876,6 +1001,7 @@ public class Game1 : Game
 
     private static string IconFor(Tile t)
     {
+        if (IsWireTile(t)) return null; // wires are drawn procedurally, see DrawWire
         if (t.Placed.HasValue) return Icons.KeyFor(t.Placed.Value);
         return t.Type switch
         {
@@ -888,8 +1014,17 @@ public class Game1 : Game
         };
     }
 
-    private static Color SlotColor(Tile t) =>
-        t.Conducts && !t.Placed.HasValue && !t.IsSource && t.Type != TileType.House ? SlotCable : SlotEmpty;
+    /// <summary>
+    /// True for any tile that should render as a plain auto-shaped wire
+    /// rather than an icon: a fixed map cable, a player-placed Cable tool,
+    /// or a broken cable that's been repaired.
+    /// </summary>
+    private static bool IsWireTile(Tile t) =>
+        t.Placed == ToolType.Cable ||
+        (t.Type == TileType.Cable && !t.Placed.HasValue) ||
+        (t.Type == TileType.BrokenCable && t.Repaired);
+
+    private static Color SlotColor(Tile t) => IsWireTile(t) ? SlotCable : SlotEmpty;
 
     private static Color IconTint(Tile t, Phase phase)
     {

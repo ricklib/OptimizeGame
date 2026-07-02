@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\OptimizeGame\SmartGrid.csproj" />
+    <ProjectReference Include="..\OptimizeGame\SmartGrid\SmartGrid.csproj" />
   </ItemGroup>
 
   <ItemGroup>
